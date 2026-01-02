@@ -4,7 +4,7 @@ header("Access-Control-Allow-Origin: *");
 header("Content-Security-Policy: frame-ancestors *;"); 
 
 // --- CONFIGURATION ---
-$admin_pass = "CityStaff2025"; // Use this consistently in Admin Login
+$admin_pass = "City"; // Use this consistently in Admin Login
 $db_file = 'city_projects.db';
 
 // --- AUTHENTICATION LOGIC ---
