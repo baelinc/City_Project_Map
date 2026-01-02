@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sulphur Admin Portal</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #f0f2f5; }
+        #adminUI { display: none; height: 100vh; width: 100%; flex-direction: row; }
+        #map { flex-grow: 1; height: 100%; background: #ddd; }
+        #sidebar { width: 450px; height: 100vh; background: white; border-left: 1px solid #ccc; display: flex; flex-direction: column; }
+        .sidebar-content { padding: 20px; overflow-y: auto; flex: 1; }
+        .box { border: 1px solid #ddd; padding: 15px; border-radius: 8px; margin-bottom: 20px; background: #fafafa; }
+        label { display: block; font-weight: bold; margin-top: 10px; font-size: 11px; color: #555; text-transform: uppercase; }
+        input, textarea, select { width: 100%; padding: 10px; margin: 4px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .color-row { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+        #pColor { width: 60px; height: 40px; padding: 2px; cursor: pointer; }
+        button { width: 100%; padding: 12px; cursor: pointer; font-weight: bold; border: none; border-radius: 4px; margin-top: 5px; transition: 0.2s; }
+        .btn-blue { background: #007bff; color: white; }
+        .btn-green { background: #28a745; color: white; }
+        .btn-outline { background: transparent; border: 1px solid #007bff; color: #007bff; font-size: 11px; padding: 8px; }
+        .btn-red { background: #dc3545; color: white; width: auto; padding: 4px 8px; font-size: 11px; }
+        .item-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .color-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; border: 1px solid #999; }
+        #loginOverlay { position: fixed; inset: 0; background: #2c3e50; z-index: 10000; display: flex; align-items: center; justify-content: center; color: white; }
+    </style>
+</head>
+<body>
+
+<div id="loginOverlay">
+    <div style="text-align: center;">
+        <h2>Sulphur Admin Access</h2>
+        <input type="password" id="loginPass" placeholder="Password">
+        <button class="btn-blue" onclick="attemptLogin()" style="width: 200px; margin-top: 15px;">LOGIN</button>
+    </div>
+</div>
+
+<div id="adminUI">
+    <div id="map"></div>
+    <div id="sidebar">
+        <div class="sidebar-content">
+            <h3>Bulk Tools</h3>
+            <div class="box">
+                <button class="btn-outline" onclick="downloadTemplate()">1. DOWNLOAD EXCEL TEMPLATE</button>
+                <label style="margin-top:15px;">2. UPLOAD COMPLETED DATA</label>
+                <input type="file" id="excelFile" accept=".xlsx, .xls">
+                <button class="btn-blue" onclick="importExcel()">IMPORT PROJECTS</button>
+                <p style="font-size: 10px; color: #666; margin-top: 8px;">Dates: MM/DD/YYYY | Amount: $#,###.##</p>
+            </div>
+
+            <h3>Layer Manager</h3>
+            <div class="box">
+                <input type="hidden" id="editLayerId">
+                <label>Category Name</label>
+                <input type="text" id="lName">
+                <label>Default Map Color</label>
+                <input type="color" id="lColor" value="#007bff">
+                <button class="btn-green" onclick="saveLayer()">SAVE CATEGORY</button>
+                <div id="layerList" style="margin-top:10px;"></div>
+            </div>
+
+            <h3 id="formHeader" style="color:#007bff;">Project Editor</h3>
+            <div class="box">
+                <input type="hidden" id="editId">
+                <label>Project Name</label><input type="text" id="pName">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div><label>Category</label><select id="pLayer" onchange="syncColorFromLayer()"></select></div>
+                    <div><label>Progress %</label><input type="number" id="pProgress" value="0"></div>
+                </div>
+                <label>Project Highlight Color</label>
+                <div class="color-row">
+                    <input type="color" id="pColor" value="#007bff">
+                    <span style="font-size: 11px; color: #666;">(Synced to Category)</span>
+                </div>
+                <label>Description</label><textarea id="pDesc" rows="3"></textarea>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div><label>Start Date</label><input type="date" id="pStart"></div>
+                    <div><label>Completion Date</label><input type="date" id="pEnd"></div>
+                </div>
+                <label>Engineer</label><input type="text" id="pEngineer">
+                <label>Contractor</label><input type="text" id="pContractor">
+                <label>Award Amount ($)</label><input type="text" id="pAwardAmount" placeholder="$0.00">
+                <label>Document Link (URL)</label><input type="text" id="pDoc">
+                <button class="btn-blue" onclick="saveProject()">SAVE PROJECT & MAP</button>
+                <button onclick="location.reload()" style="background:#6c757d; color:white;">CANCEL / RESET</button>
+                <button onclick="logout()" style="background:transparent; color:#dc3545; border: 1px solid #dc3545; margin-top: 20px;">LOGOUT</button>
+            </div>
+
+            <h3>Existing Projects</h3>
+            <div id="projectList"></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script>
+    const map = L.map('map').setView([30.2366, -93.3774], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    const drawnItems = new L.FeatureGroup().addTo(map);
+    new L.Control.Draw({ edit: { featureGroup: drawnItems }, draw: { circle:false, rectangle:false, circlemarker:false } }).addTo(map);
+    map.on(L.Draw.Event.CREATED, e => drawnItems.addLayer(e.layer));
+
+    let layersCache = [];
+
+    // --- FORMATTING HELPERS ---
+
+    function formatExcelDate(dateStr) {
+        if (!dateStr || typeof dateStr !== 'string') return '';
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+            const m = parts[0].padStart(2, '0');
+            const d = parts[1].padStart(2, '0');
+            const y = parts[2];
+            return `${y}-${m}-${d}`;
+        }
+        return dateStr;
+    }
+
+    function downloadTemplate() {
+        const headers = [["Name", "Description", "CategoryID", "Progress", "StartDate", "EndDate", "Engineer", "Contractor", "AwardAmount", "DocLink"]];
+        const example = [["Bridge Repair", "Fixing main span", "1", "25", "01/15/2025", "12/31/2025", "Jane Smith", "BuildCo", "$1,250,000.00", "http://docs.com"]];
+        const ws = XLSX.utils.aoa_to_sheet(headers.concat(example));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Projects");
+        XLSX.writeFile(wb, "Sulphur_Projects_Template.xlsx");
+    }
+
+    async function importExcel() {
+        const fileInput = document.getElementById('excelFile');
+        if (!fileInput.files[0]) return alert("Please select a file.");
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const data = new Uint8Array(e.target.result);
+            // Read workbook without automatic date parsing to keep strings intact
+            const workbook = XLSX.read(data, { type: 'array' });
+            
+            // raw: false forces the reader to capture the cell text (MM/DD/YYYY)
+            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { raw: false });
+            const pass = sessionStorage.getItem('adminPass');
+
+            for (let row of rows) {
+                const pData = {
+                    name: row.Name || 'New Project',
+                    desc: row.Description || '',
+                    layer_id: row.CategoryID || (layersCache[0] ? layersCache[0].id : 1),
+                    start_date: formatExcelDate(row.StartDate),
+                    completion_date: formatExcelDate(row.EndDate),
+                    progress: row.Progress || 0,
+                    color: '#007bff',
+                    doc: row.DocLink || '',
+                    engineer: row.Engineer || '',
+                    contractor: row.Contractor || '',
+                    award_amount: row.AwardAmount ? String(row.AwardAmount) : '',
+                    geometry: { type: "GeometryCollection", geometries: [] }
+                };
+                await fetch('api.php?action=save_project', {
+                    method: 'POST',
+                    headers: { 'x-admin-password': pass },
+                    body: JSON.stringify(pData)
+                });
+            }
+            alert("Import Complete!");
+            location.reload();
+        };
+        reader.readAsArrayBuffer(fileInput.files[0]);
+    }
+
+    // --- AUTH & DATA LOADING ---
+
+    async function checkAuth() {
+        const pass = sessionStorage.getItem('adminPass');
+        if (!pass) {
+            document.getElementById('loginOverlay').style.display = 'flex';
+            document.getElementById('adminUI').style.display = 'none';
+        } else {
+            const res = await fetch('api.php?action=get_layers', { headers: { 'x-admin-password': pass } });
+            if (res.ok) {
+                document.getElementById('loginOverlay').style.display = 'none';
+                document.getElementById('adminUI').style.display = 'flex';
+                setTimeout(() => { map.invalidateSize(); }, 200);
+                loadAll();
+            } else { logout(); }
+        }
+    }
+
+    async function attemptLogin() {
+        const pass = document.getElementById('loginPass').value;
+        const res = await fetch('api.php?action=login', { method: 'POST', body: JSON.stringify({password: pass}) });
+        if(res.ok) { sessionStorage.setItem('adminPass', pass); checkAuth(); } else alert("Access Denied");
+    }
+
+    function logout() { sessionStorage.removeItem('adminPass'); location.reload(); }
+
+    async function loadAll() {
+        const pass = sessionStorage.getItem('adminPass');
+        const [lRes, pRes] = await Promise.all([
+            fetch('api.php?action=get_layers', { headers: {'x-admin-password': pass} }), 
+            fetch('api.php?action=get_projects', { headers: {'x-admin-password': pass} })
+        ]);
+        layersCache = await lRes.json();
+        const projects = await pRes.json();
+
+        document.getElementById('layerList').innerHTML = layersCache.map(l => `
+            <div class="item-row">
+                <span><span class="color-dot" style="background:${l.default_color}"></span>${l.name} (ID: ${l.id})</span>
+                <div>
+                    <button onclick="editLayer(${l.id}, '${l.name}', '${l.default_color}')" style="width:auto; padding:2px 5px;">Edit</button>
+                    <button class="btn-red" onclick="del('layer', ${l.id})">X</button>
+                </div>
+            </div>`).join('');
+
+        document.getElementById('pLayer').innerHTML = layersCache.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+        document.getElementById('projectList').innerHTML = projects.map(p => `
+            <div class="item-row">
+                <span><span class="color-dot" style="background:${p.color}"></span>${p.name}</span>
+                <div>
+                    <button onclick="editProject(${p.id})" style="width:auto; padding:2px 5px;">Edit</button>
+                    <button class="btn-red" onclick="del('project', ${p.id})">X</button>
+                </div>
+            </div>`).join('');
+        syncColorFromLayer();
+    }
+
+    function syncColorFromLayer() {
+        const selectedLayerId = document.getElementById('pLayer').value;
+        const layer = layersCache.find(l => l.id == selectedLayerId);
+        if (layer) document.getElementById('pColor').value = layer.default_color;
+    }
+
+    function editLayer(id, name, color) {
+        document.getElementById('editLayerId').value = id;
+        document.getElementById('lName').value = name;
+        document.getElementById('lColor').value = color;
+    }
+
+    async function saveLayer() {
+        const data = { id: document.getElementById('editLayerId').value, name: document.getElementById('lName').value, default_color: document.getElementById('lColor').value };
+        await fetch('api.php?action=save_layer', { method: 'POST', headers: { 'x-admin-password': sessionStorage.getItem('adminPass') }, body: JSON.stringify(data) });
+        location.reload();
+    }
+
+    async function editProject(id) {
+        const pass = sessionStorage.getItem('adminPass');
+        const res = await fetch('api.php?action=get_projects', { headers: {'x-admin-password': pass} });
+        const projects = await res.json();
+        const p = projects.find(x => x.id == id);
+        
+        document.getElementById('editId').value = p.id;
+        document.getElementById('pName').value = p.name;
+        document.getElementById('pDesc').value = p.description;
+        document.getElementById('pLayer').value = p.layer_id;
+        document.getElementById('pColor').value = p.color;
+        document.getElementById('pProgress').value = p.progress;
+        document.getElementById('pStart').value = p.start_date;
+        document.getElementById('pEnd').value = p.completion_date;
+        document.getElementById('pEngineer').value = p.engineer || "";
+        document.getElementById('pContractor').value = p.contractor || "";
+        document.getElementById('pAwardAmount').value = p.award_amount || "";
+        document.getElementById('pDoc').value = p.doc_link || "";
+
+        drawnItems.clearLayers();
+        if(p.geometry) {
+            L.geoJSON(p.geometry, {
+                style: { color: p.color, weight: 5, opacity: 0.8 },
+                pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 8, fillColor: p.color, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9 })
+            }).eachLayer(layer => drawnItems.addLayer(layer));
+            if (drawnItems.getLayers().length > 0) map.fitBounds(drawnItems.getBounds());
+        }
+        document.getElementById('formHeader').innerText = "Editing: " + p.name;
+        document.getElementById('formHeader').scrollIntoView();
+    }
+
+    async function saveProject() {
+        const shapes = [];
+        drawnItems.eachLayer(l => { if(l.toGeoJSON) shapes.push(l.toGeoJSON().geometry); });
+        const data = {
+            id: document.getElementById('editId').value,
+            name: document.getElementById('pName').value,
+            desc: document.getElementById('pDesc').value,
+            layer_id: document.getElementById('pLayer').value,
+            start_date: document.getElementById('pStart').value,
+            completion_date: document.getElementById('pEnd').value,
+            progress: document.getElementById('pProgress').value,
+            color: document.getElementById('pColor').value,
+            doc: document.getElementById('pDoc').value,
+            engineer: document.getElementById('pEngineer').value,
+            contractor: document.getElementById('pContractor').value,
+            award_amount: document.getElementById('pAwardAmount').value,
+            geometry: { type: "GeometryCollection", geometries: shapes }
+        };
+        await fetch('api.php?action=save_project', { method: 'POST', headers: { 'x-admin-password': sessionStorage.getItem('adminPass') }, body: JSON.stringify(data) });
+        location.reload();
+    }
+
+    async function del(type, id) {
+        if(confirm("Delete this?")) {
+            await fetch(`api.php?action=delete&type=${type}&id=${id}`, { method: 'DELETE', headers: { 'x-admin-password': sessionStorage.getItem('adminPass') } });
+            loadAll();
+        }
+    }
+
+    checkAuth();
+</script>
+</body>
+</html>
