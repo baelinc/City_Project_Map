@@ -8,20 +8,27 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #f0f2f5; }
-        #adminUI { display: none; height: 100vh; width: 100%; flex-direction: row; }
+        
+        /* Added Top Nav for Logout */
+        #topNav { height: 50px; background: #2c3e50; color: white; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 1001; position: relative; }
+        
+        #adminUI { display: none; height: calc(100vh - 50px); width: 100%; flex-direction: row; }
         #map { flex-grow: 1; height: 100%; background: #ddd; }
-        #sidebar { width: 450px; height: 100vh; background: white; border-left: 1px solid #ccc; display: flex; flex-direction: column; }
+        #sidebar { width: 450px; height: 100%; background: white; border-left: 1px solid #ccc; display: flex; flex-direction: column; }
         .sidebar-content { padding: 20px; overflow-y: auto; flex: 1; }
         .box { border: 1px solid #ddd; padding: 15px; border-radius: 8px; margin-bottom: 20px; background: #fafafa; }
         label { display: block; font-weight: bold; margin-top: 10px; font-size: 11px; color: #555; text-transform: uppercase; }
         input, textarea, select { width: 100%; padding: 10px; margin: 4px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         .color-row { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
-        #pColor { width: 60px; height: 40px; padding: 2px; cursor: pointer; }
+        
+        /* Fixed Color Input Sizing */
+        #pColor, #lColor { width: 100%; height: 40px; padding: 2px; cursor: pointer; }
+        
         button { width: 100%; padding: 12px; cursor: pointer; font-weight: bold; border: none; border-radius: 4px; margin-top: 5px; transition: 0.2s; }
         .btn-blue { background: #007bff; color: white; }
         .btn-green { background: #28a745; color: white; }
         .btn-outline { background: transparent; border: 1px solid #007bff; color: #007bff; font-size: 11px; padding: 8px; }
-        .btn-red { background: #dc3545; color: white; width: auto; padding: 4px 8px; font-size: 11px; }
+        .btn-red { background: #dc3545; color: white; width: auto; padding: 6px 12px; font-size: 11px; }
         .item-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
         .color-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; border: 1px solid #999; }
         #loginOverlay { position: fixed; inset: 0; background: #2c3e50; z-index: 10000; display: flex; align-items: center; justify-content: center; color: white; }
@@ -35,6 +42,11 @@
         <input type="password" id="loginPass" placeholder="Password">
         <button class="btn-blue" onclick="attemptLogin()" style="width: 200px; margin-top: 15px;">LOGIN</button>
     </div>
+</div>
+
+<div id="topNav">
+    <div style="font-weight: bold;">Sulphur Admin Portal</div>
+    <button class="btn-red" onclick="logout()">LOGOUT</button>
 </div>
 
 <div id="adminUI">
@@ -85,7 +97,6 @@
                 <label>Document Link (URL)</label><input type="text" id="pDoc">
                 <button class="btn-blue" onclick="saveProject()">SAVE PROJECT & MAP</button>
                 <button onclick="location.reload()" style="background:#6c757d; color:white;">CANCEL / RESET</button>
-                <button onclick="logout()" style="background:transparent; color:#dc3545; border: 1px solid #dc3545; margin-top: 20px;">LOGOUT</button>
             </div>
 
             <h3>Existing Projects</h3>
@@ -105,8 +116,7 @@
 
     let layersCache = [];
 
-    // --- FORMATTING HELPERS ---
-
+    // --- BULK TOOLS ---
     function formatExcelDate(dateStr) {
         if (!dateStr || typeof dateStr !== 'string') return '';
         const parts = dateStr.split('/');
@@ -131,17 +141,12 @@
     async function importExcel() {
         const fileInput = document.getElementById('excelFile');
         if (!fileInput.files[0]) return alert("Please select a file.");
-
         const reader = new FileReader();
         reader.onload = async (e) => {
             const data = new Uint8Array(e.target.result);
-            // Read workbook without automatic date parsing to keep strings intact
             const workbook = XLSX.read(data, { type: 'array' });
-            
-            // raw: false forces the reader to capture the cell text (MM/DD/YYYY)
             const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { raw: false });
             const pass = sessionStorage.getItem('adminPass');
-
             for (let row of rows) {
                 const pData = {
                     name: row.Name || 'New Project',
@@ -159,7 +164,7 @@
                 };
                 await fetch('api.php?action=save_project', {
                     method: 'POST',
-                    headers: { 'x-admin-password': pass },
+                    headers: { 'x-admin-password': pass, 'Content-Type': 'application/json' },
                     body: JSON.stringify(pData)
                 });
             }
@@ -170,7 +175,6 @@
     }
 
     // --- AUTH & DATA LOADING ---
-
     async function checkAuth() {
         const pass = sessionStorage.getItem('adminPass');
         if (!pass) {
@@ -206,7 +210,7 @@
 
         document.getElementById('layerList').innerHTML = layersCache.map(l => `
             <div class="item-row">
-                <span><span class="color-dot" style="background:${l.default_color}"></span>${l.name} (ID: ${l.id})</span>
+                <span><span class="color-dot" style="background:${l.default_color}"></span>${l.name}</span>
                 <div>
                     <button onclick="editLayer(${l.id}, '${l.name}', '${l.default_color}')" style="width:auto; padding:2px 5px;">Edit</button>
                     <button class="btn-red" onclick="del('layer', ${l.id})">X</button>
@@ -231,18 +235,28 @@
         if (layer) document.getElementById('pColor').value = layer.default_color;
     }
 
+    // --- LAYER MANAGER ---
     function editLayer(id, name, color) {
         document.getElementById('editLayerId').value = id;
         document.getElementById('lName').value = name;
-        document.getElementById('lColor').value = color;
+        document.getElementById('lColor').value = color; // ID Fixed
     }
 
     async function saveLayer() {
-        const data = { id: document.getElementById('editLayerId').value, name: document.getElementById('lName').value, default_color: document.getElementById('lColor').value };
-        await fetch('api.php?action=save_layer', { method: 'POST', headers: { 'x-admin-password': sessionStorage.getItem('adminPass') }, body: JSON.stringify(data) });
+        const data = { 
+            id: document.getElementById('editLayerId').value, 
+            name: document.getElementById('lName').value, 
+            default_color: document.getElementById('lColor').value 
+        };
+        await fetch('api.php?action=save_layer', { 
+            method: 'POST', 
+            headers: { 'x-admin-password': sessionStorage.getItem('adminPass'), 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(data) 
+        });
         location.reload();
     }
 
+    // --- PROJECT EDITOR ---
     async function editProject(id) {
         const pass = sessionStorage.getItem('adminPass');
         const res = await fetch('api.php?action=get_projects', { headers: {'x-admin-password': pass} });
@@ -265,8 +279,7 @@
         drawnItems.clearLayers();
         if(p.geometry) {
             L.geoJSON(p.geometry, {
-                style: { color: p.color, weight: 5, opacity: 0.8 },
-                pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 8, fillColor: p.color, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9 })
+                style: { color: p.color, weight: 5, opacity: 0.8 }
             }).eachLayer(layer => drawnItems.addLayer(layer));
             if (drawnItems.getLayers().length > 0) map.fitBounds(drawnItems.getBounds());
         }
@@ -292,13 +305,20 @@
             award_amount: document.getElementById('pAwardAmount').value,
             geometry: { type: "GeometryCollection", geometries: shapes }
         };
-        await fetch('api.php?action=save_project', { method: 'POST', headers: { 'x-admin-password': sessionStorage.getItem('adminPass') }, body: JSON.stringify(data) });
+        await fetch('api.php?action=save_project', { 
+            method: 'POST', 
+            headers: { 'x-admin-password': sessionStorage.getItem('adminPass'), 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(data) 
+        });
         location.reload();
     }
 
     async function del(type, id) {
         if(confirm("Delete this?")) {
-            await fetch(`api.php?action=delete&type=${type}&id=${id}`, { method: 'DELETE', headers: { 'x-admin-password': sessionStorage.getItem('adminPass') } });
+            await fetch(`api.php?action=delete&type=${type}&id=${id}`, { 
+                method: 'DELETE', 
+                headers: { 'x-admin-password': sessionStorage.getItem('adminPass') } 
+            });
             loadAll();
         }
     }
