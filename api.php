@@ -1,91 +1,121 @@
 <?php
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
+header("Access-Control-Allow-Origin: *");
+header("Content-Security-Policy: frame-ancestors *;"); 
 
-$dbFile = 'projects.db'; 
-$adminPassword = 'YourPassword123'; // CHANGE THIS TO YOUR SECURE PASSWORD
+// --- CONFIGURATION ---
+$admin_pass = "CityStaff2025"; // Use this consistently in Admin Login
+$db_file = 'city_projects.db';
 
-try {
-    $pdo = new PDO("sqlite:" . $dbFile);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-} catch (PDOException $e) {
-    echo json_encode(['error' => 'Connection failed: ' . $e->getMessage()]);
-    exit;
-}
-
-// Simple Auth Check for Admin Actions
-$providedPass = $_SERVER['HTTP_X_ADMIN_PASSWORD'] ?? '';
-$isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
-$isDelete = $_SERVER['REQUEST_METHOD'] === 'DELETE';
-
+// --- AUTHENTICATION LOGIC ---
+$provided_pass = $_SERVER['HTTP_X_ADMIN_PASSWORD'] ?? '';
 $action = $_GET['action'] ?? '';
+$method = $_SERVER['REQUEST_METHOD'];
 
-// 1. LOGIN ACTION
-if ($action === 'login' && $isPost) {
+// 1. Handle Login Action
+if ($action === 'login') {
     $data = json_decode(file_get_contents('php://input'), true);
-    if (($data['password'] ?? '') === $adminPassword) {
-        echo json_encode(['success' => true]);
+    if (isset($data['password']) && $data['password'] === $admin_pass) {
+        echo json_encode(["success" => true]);
     } else {
         http_response_code(401);
-        echo json_encode(['error' => 'Unauthorized']);
+        echo json_encode(["error" => "Invalid Password"]);
     }
     exit;
 }
 
-// 2. GET ACTIONS (Public & Admin)
+// 2. Protect all non-GET actions (Save/Delete) and the get_layers/get_projects for Admin
+// We allow GET requests for the public index.html, but admin.html sends the pass for everything.
+$protected_actions = ['save_project', 'save_layer', 'delete', 'get_layers', 'get_projects'];
+if ($method !== 'GET' || in_array($action, $protected_actions)) {
+    // If it's the admin portal calling, it will have the password.
+    // If it's the public portal calling get_projects/get_layers, we can allow it without pass.
+    if ($method !== 'GET' && $provided_pass !== $admin_pass) {
+        http_response_code(401);
+        exit(json_encode(["error" => "Unauthorized"]));
+    }
+}
+
+// --- DATABASE CONNECTION ---
+try {
+    $db = new PDO("sqlite:$db_file");
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+} catch (Exception $e) {
+    http_response_code(500);
+    die(json_encode(["error" => $e->getMessage()]));
+}
+
+// Ensure Tables Exist
+$db->exec("CREATE TABLE IF NOT EXISTS layers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, default_color TEXT)");
+$db->exec("CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, layer_id INTEGER, 
+    start_date TEXT, completion_date TEXT, progress INTEGER, color TEXT, weight INTEGER, 
+    doc_link TEXT, geometry TEXT, engineer TEXT, bid_date TEXT, award_date TEXT, 
+    award_amount TEXT, contractor TEXT
+)");
+
+// --- ROUTING ---
+
 if ($action === 'get_layers') {
-    $stmt = $pdo->query("SELECT id, name, color as default_color FROM layers ORDER BY name ASC");
-    echo json_encode($stmt->fetchAll());
-} 
+    echo json_encode($db->query("SELECT * FROM layers ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC));
+}
 
 elseif ($action === 'get_projects') {
-    $sql = "SELECT p.*, l.name as layer_name, l.color as layer_color 
-            FROM projects p LEFT JOIN layers l ON p.layer_id = l.id ORDER BY p.id DESC";
-    $stmt = $pdo->query($sql);
-    $projects = $stmt->fetchAll();
-    foreach ($projects as &$p) {
-        if (!empty($p['geometry'])) $p['geometry'] = json_decode($p['geometry']);
+    $rows = $db->query("SELECT projects.*, layers.name as layer_name FROM projects LEFT JOIN layers ON projects.layer_id = layers.id")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rows as &$r) { 
+        $r['geometry'] = json_decode($r['geometry']); 
     }
-    echo json_encode($projects);
-} 
-
-// 3. ADMIN SAVE ACTIONS (Requires Password)
-if ($providedPass !== $adminPassword) {
-    http_response_code(401);
-    exit;
+    echo json_encode($rows);
 }
 
-if ($action === 'save_layer' && $isPost) {
+elseif ($action === 'save_layer') {
     $data = json_decode(file_get_contents('php://input'), true);
     if (!empty($data['id'])) {
-        $stmt = $pdo->prepare("UPDATE layers SET name = ?, color = ? WHERE id = ?");
-        $stmt->execute([$data['name'], $data['default_color'], $data['id']]);
+        $st = $db->prepare("UPDATE layers SET name=?, default_color=? WHERE id=?");
+        $st->execute([$data['name'], $data['default_color'], $data['id']]);
     } else {
-        $stmt = $pdo->prepare("INSERT INTO layers (name, color) VALUES (?, ?)");
-        $stmt->execute([$data['name'], $data['default_color']]);
+        $st = $db->prepare("INSERT INTO layers (name, default_color) VALUES (?,?)");
+        $st->execute([$data['name'], $data['default_color']]);
     }
-    echo json_encode(['success' => true]);
+    echo json_encode(["success" => true]);
 }
 
-elseif ($action === 'save_project' && $isPost) {
+elseif ($action === 'save_project') {
     $data = json_decode(file_get_contents('php://input'), true);
-    $geo = json_encode($data['geometry']);
     
+    // Mapping incoming JSON keys to Database Columns
+    $params = [
+        $data['name'], 
+        $data['desc'], 
+        $data['layer_id'], 
+        $data['start_date'], 
+        $data['completion_date'], // Matches Admin JS
+        $data['progress'], 
+        $data['color'], 
+        5, 
+        $data['doc'], 
+        json_encode($data['geometry']), 
+        $data['engineer'], 
+        $data['bid_date'] ?? '', 
+        $data['award_date'] ?? '', 
+        $data['award_amount'], 
+        $data['contractor']
+    ];
+
     if (!empty($data['id'])) {
-        $sql = "UPDATE projects SET name=?, description=?, layer_id=?, start_date=?, completion_date=?, progress=?, color=?, doc_link=?, engineer=?, contractor=?, award_amount=?, geometry=? WHERE id=?";
-        $params = [$data['name'], $data['desc'], $data['layer_id'], $data['start_date'], $data['completion_date'], $data['progress'], $data['color'], $data['doc'], $data['engineer'], $data['contractor'], $data['award_amount'], $geo, $data['id']];
+        $params[] = $data['id'];
+        $st = $db->prepare("UPDATE projects SET name=?, description=?, layer_id=?, start_date=?, completion_date=?, progress=?, color=?, weight=?, doc_link=?, geometry=?, engineer=?, bid_date=?, award_date=?, award_amount=?, contractor=? WHERE id=?");
     } else {
-        $sql = "INSERT INTO projects (name, description, layer_id, start_date, completion_date, progress, color, doc_link, engineer, contractor, award_amount, geometry) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)";
-        $params = [$data['name'], $data['desc'], $data['layer_id'], $data['start_date'], $data['completion_date'], $data['progress'], $data['color'], $data['doc'], $data['engineer'], $data['contractor'], $data['award_amount'], $geo];
+        $st = $db->prepare("INSERT INTO projects (name, description, layer_id, start_date, completion_date, progress, color, weight, doc_link, geometry, engineer, bid_date, award_date, award_amount, contractor) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     }
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    echo json_encode(['success' => true]);
+    $st->execute($params);
+    echo json_encode(["success" => true]);
 }
 
-elseif ($action === 'delete' && $isDelete) {
-    $type = $_GET['type'] === 'layer' ? 'layers' : 'projects';
-    $stmt = $pdo->prepare("DELETE FROM $type WHERE id = ?");
-    $stmt->execute([$_GET['id']]);
-    echo json_encode(['success' => true]);
+elseif ($action === 'delete') {
+    $table = ($_GET['type'] === 'layer') ? 'layers' : 'projects';
+    $st = $db->prepare("DELETE FROM $table WHERE id = ?");
+    $st->execute([$_GET['id']]);
+    echo json_encode(["success" => true]);
 }
+?>
